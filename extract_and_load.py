@@ -1,14 +1,17 @@
 import imaplib
 import email
-import yaml
 import re
 import csv
 import os
+import pandas as pd
 from datetime import datetime, timedelta
 
 # Load credentials
 user = os.getenv("EMAIL_USERNAME")
 password = os.getenv("EMAIL_PASSWORD")
+
+if not user or not password:
+    raise ValueError("EMAIL_USERNAME or EMAIL_PASSWORD not set")
 
 imap_url = 'imap.gmail.com'
 
@@ -19,13 +22,14 @@ my_mail.select('Inbox')
 
 # Search Mailchimp emails
 
-
-
 since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
 
-_, data = my_mail.search(None,
+status, data = my_mail.search(None,
     f'(FROM "accountservices@mailchimp.com" SUBJECT "New subscriber" SINCE "{since_date}")'
 )
+
+if status != "OK":
+    raise Exception("Failed to search emails")
 
 mail_id_list = data[0].split()
 
@@ -75,12 +79,18 @@ for i, num in enumerate(mail_id_list):
 # Save to CSV
 keys = ["email", "subscription_date", "first_name", "phone", "ip"]
 
-with open("subscribers.csv", "w", newline='', encoding="utf-8") as f:
-    writer = csv.DictWriter(f, fieldnames=keys)
-    writer.writeheader()
-    writer.writerows(results)
+df_new = pd.DataFrame(results)
 
-print(f"✅ Extracted {len(results)} subscribers to subscribers.csv")
+try:
+    df_existing = pd.read_csv("subscribers.csv")
+    df = pd.concat([df_existing, df_new])
+    df = df.drop_duplicates(subset=["email"])
+except FileNotFoundError:
+    df = df_new
+
+df.to_csv("subscribers.csv", index=False)
+
+print(f"✅ Total unique subscribers: {len(df)}")
 
 # Close connection
 my_mail.close()
