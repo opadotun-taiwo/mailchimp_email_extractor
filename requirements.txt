@@ -1,0 +1,6 @@
+imaplib
+email
+PyYAML
+pandas
+gspread
+oauth2client
