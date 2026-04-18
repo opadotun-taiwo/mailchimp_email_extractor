@@ -20,7 +20,7 @@ By centralizing subscriber data and visualizing trends, this pipeline helps answ
 
 ## Architecture
 
-![Alt text](C:\Users\admin\Desktop\complete_data_project\extract_info_gmail\Subscriber Data Pipeline Architecture.png)
+![Alt text](https://github.com/opadotun-taiwo/mailchimp_email_extractor/blob/main/Subscriber%20Data%20Pipeline%20Architecture.png)
 
 ## Tech Stack
 
@@ -115,6 +115,8 @@ Subscriber IP
 This dataset is continuously updated and deduplicated.
 
 Visualization (Looker Studio) - https://datastudio.google.com/reporting/d3caf121-0112-4f59-af7d-dd7162a9d330
+
+![Alt text](https://github.com/opadotun-taiwo/mailchimp_email_extractor/blob/main/Subscriber%20Data%20Pipeline%20Architecture.png)
 
 Connect your Google Sheet to Looker Studio to build dashboards such as:
 
