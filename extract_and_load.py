@@ -154,6 +154,8 @@ try:
     df = pd.concat([df_existing, df_new])
     df = df.drop_duplicates(subset=["email"])
 
+    df = df.astype(object).where(pd.notnull(df), "")
+
 except Exception as e:
     print("No existing data or error:", e)
     df = df_new
