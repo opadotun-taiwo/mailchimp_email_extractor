@@ -4,30 +4,45 @@ import re
 import os
 import pandas as pd
 from datetime import datetime, timedelta
-
-# NEW: Google Sheets imports
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import base64
+import json
 
 # Load credentials
 user = os.getenv("EMAIL_USERNAME")
 password = os.getenv("EMAIL_PASSWORD")
-google_creds = os.getenv("GOOGLE_CREDS")  # NEW
+google_creds_b64 = os.getenv("GOOGLE_CREDS")
 
 if not user or not password:
     raise ValueError("EMAIL_USERNAME or EMAIL_PASSWORD not set")
 
-if not google_creds:
+if not google_creds_b64:
     raise ValueError("GOOGLE_CREDS not set")
 
-imap_url = 'imap.gmail.com'
+# Decode base64 → JSON
+decoded_creds = base64.b64decode(google_creds_b64).decode("utf-8")
+creds_dict = json.loads(decoded_creds)
 
-# Connect to Gmail
+# Google Sheets auth
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+
+# Open sheet
+sheet = client.open("Mailchimp Subscribers").sheet1
+
+# Gmail setup
+imap_url = 'imap.gmail.com'
 my_mail = imaplib.IMAP4_SSL(imap_url)
 my_mail.login(user, password)
 my_mail.select('Inbox')
 
-# Search Mailchimp emails
+# Search Mailchimp emails (last 30 days)
 since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
 
 status, data = my_mail.search(
@@ -39,7 +54,6 @@ if status != "OK":
     raise Exception("Failed to search emails")
 
 mail_id_list = data[0].split()
-
 print(f"Found {len(mail_id_list)} emails")
 
 # Extract fields
@@ -62,10 +76,9 @@ def extract_fields(text):
         print("Error parsing:", e)
         return None
 
-
 results = []
 
-# Loop through emails
+# Process emails
 for i, num in enumerate(mail_id_list):
     print(f"Processing email {i+1}/{len(mail_id_list)}")
     typ, data = my_mail.fetch(num, '(RFC822)')
@@ -75,7 +88,7 @@ for i, num in enumerate(mail_id_list):
             msg = email.message_from_bytes(response_part[1])
 
             for part in msg.walk():
-                if part.get_content_type() in ['text/plain', 'text/html']:  # UPDATED
+                if part.get_content_type() in ['text/plain', 'text/html']:
                     body = part.get_payload(decode=True).decode(errors='ignore')
 
                     parsed = extract_fields(body)
@@ -85,34 +98,19 @@ for i, num in enumerate(mail_id_list):
 # Convert to DataFrame
 df_new = pd.DataFrame(results)
 
-
-# GOOGLE SHEETS INTEGRATION
-
-# Save credentials to file (for gspread)
-with open("access.json", "w") as f:
-    f.write(google_creds)
-
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
-
-creds = ServiceAccountCredentials.from_json_keyfile_name("access.json", scope)
-client = gspread.authorize(creds)
-
-# Open your sheet (make sure name matches exactly)
-sheet = client.open("Mailchimp Subscribers").sheet1
-
-# Load existing data from sheet
+# Load existing data
 try:
     existing_data = sheet.get_all_records()
     df_existing = pd.DataFrame(existing_data)
+
     df = pd.concat([df_existing, df_new])
     df = df.drop_duplicates(subset=["email"])
-except:
+
+except Exception as e:
+    print("No existing data or error:", e)
     df = df_new
 
-# Clear and update sheet
+# Update sheet
 sheet.clear()
 sheet.update([df.columns.values.tolist()] + df.values.tolist())
 
