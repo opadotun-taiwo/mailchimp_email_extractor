@@ -2,11 +2,8 @@ name: Run Email Extractor Monthly
 
 on:
   schedule:
-    - cron: '0 0 1 * *'   # Runs on the 1st of every month at midnight UTC
-  workflow_dispatch:      # Allows manual run
-
-permissions:
-  contents: write 
+    - cron: '0 0 1 * *'   # Runs monthly
+  workflow_dispatch:
 
 jobs:
   run-script:
@@ -28,12 +25,5 @@ jobs:
         env:
           EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}   
         run: python extract_and_load.py
-
-      - name: Commit and push output
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
-          git add .
-          git commit -m "Automated monthly email extraction" || echo "No changes"
-          git push

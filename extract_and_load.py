@@ -1,17 +1,24 @@
 import imaplib
 import email
 import re
-import csv
 import os
 import pandas as pd
 from datetime import datetime, timedelta
 
+# NEW: Google Sheets imports
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
 # Load credentials
 user = os.getenv("EMAIL_USERNAME")
 password = os.getenv("EMAIL_PASSWORD")
+google_creds = os.getenv("GOOGLE_CREDS")  # NEW
 
 if not user or not password:
     raise ValueError("EMAIL_USERNAME or EMAIL_PASSWORD not set")
+
+if not google_creds:
+    raise ValueError("GOOGLE_CREDS not set")
 
 imap_url = 'imap.gmail.com'
 
@@ -21,10 +28,10 @@ my_mail.login(user, password)
 my_mail.select('Inbox')
 
 # Search Mailchimp emails
-
 since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
 
-status, data = my_mail.search(None,
+status, data = my_mail.search(
+    None,
     f'(FROM "accountservices@mailchimp.com" SUBJECT "New subscriber" SINCE "{since_date}")'
 )
 
@@ -35,7 +42,7 @@ mail_id_list = data[0].split()
 
 print(f"Found {len(mail_id_list)} emails")
 
-# Function to extract fields
+# Extract fields
 def extract_fields(text):
     try:
         email_match = re.search(r"Here's who subscribed:\s*(\S+)", text)
@@ -67,30 +74,49 @@ for i, num in enumerate(mail_id_list):
         if isinstance(response_part, tuple):
             msg = email.message_from_bytes(response_part[1])
 
-            # Walk through email parts
             for part in msg.walk():
-                if part.get_content_type() == 'text/plain':
+                if part.get_content_type() in ['text/plain', 'text/html']:  # UPDATED
                     body = part.get_payload(decode=True).decode(errors='ignore')
 
                     parsed = extract_fields(body)
                     if parsed and parsed["email"]:
                         results.append(parsed)
 
-# Save to CSV
-keys = ["email", "subscription_date", "first_name", "phone", "ip"]
-
+# Convert to DataFrame
 df_new = pd.DataFrame(results)
 
+
+# GOOGLE SHEETS INTEGRATION
+
+# Save credentials to file (for gspread)
+with open("access.json", "w") as f:
+    f.write(google_creds)
+
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
+creds = ServiceAccountCredentials.from_json_keyfile_name("access.json", scope)
+client = gspread.authorize(creds)
+
+# Open your sheet (make sure name matches exactly)
+sheet = client.open("Mailchimp Subscribers").sheet1
+
+# Load existing data from sheet
 try:
-    df_existing = pd.read_csv("subscribers.csv")
+    existing_data = sheet.get_all_records()
+    df_existing = pd.DataFrame(existing_data)
     df = pd.concat([df_existing, df_new])
     df = df.drop_duplicates(subset=["email"])
-except FileNotFoundError:
+except:
     df = df_new
 
-df.to_csv("subscribers.csv", index=False)
+# Clear and update sheet
+sheet.clear()
+sheet.update([df.columns.values.tolist()] + df.values.tolist())
 
-print(f"✅ Total unique subscribers: {len(df)}")
+print(f"Total unique subscribers in sheet: {len(df)}")
 
 # Close connection
 my_mail.close()
