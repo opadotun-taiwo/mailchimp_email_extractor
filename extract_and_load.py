@@ -8,8 +8,10 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import base64
 import json
+import requests
 
-# Load credentials
+
+# LOAD CREDENTIALS
 user = os.getenv("EMAIL_USERNAME")
 password = os.getenv("EMAIL_PASSWORD")
 google_creds_b64 = os.getenv("GOOGLE_CREDS")
@@ -20,11 +22,13 @@ if not user or not password:
 if not google_creds_b64:
     raise ValueError("GOOGLE_CREDS not set")
 
-# Decode base64 → JSON
+# Decode base64 to JSON
 decoded_creds = base64.b64decode(google_creds_b64).decode("utf-8")
 creds_dict = json.loads(decoded_creds)
 
-# Google Sheets auth
+
+# GOOGLE SHEETS AUTH
+
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
@@ -33,16 +37,43 @@ scope = [
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-# Open sheet
 sheet = client.open("Mailchimp Subscribers").sheet1
 
-# Gmail setup
+
+# IP GEOLOCATION (WITH CACHE)
+ip_cache = {}
+
+def get_location(ip):
+    try:
+        if not ip or ip.startswith(("127.", "192.168")):
+            return {"city": None, "state": None, "country": None}
+
+        if ip in ip_cache:
+            return ip_cache[ip]
+
+        url = f"https://ipinfo.io/{ip}/json"
+        res = requests.get(url, timeout=5).json()
+
+        location = {
+            "city": res.get("city"),
+            "state": res.get("region"),
+            "country": res.get("country")
+        }
+
+        ip_cache[ip] = location
+        return location
+
+    except Exception as e:
+        print(f"IP lookup failed for {ip}: {e}")
+        return {"city": None, "state": None, "country": None}
+
+
+# GMAIL SETUP
 imap_url = 'imap.gmail.com'
 my_mail = imaplib.IMAP4_SSL(imap_url)
 my_mail.login(user, password)
 my_mail.select('Inbox')
 
-# Search Mailchimp emails (last 30 days)
 since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
 
 status, data = my_mail.search(
@@ -56,7 +87,8 @@ if status != "OK":
 mail_id_list = data[0].split()
 print(f"Found {len(mail_id_list)} emails")
 
-# Extract fields
+
+# EXTRACT FIELDS
 def extract_fields(text):
     try:
         email_match = re.search(r"Here's who subscribed:\s*(\S+)", text)
@@ -78,7 +110,9 @@ def extract_fields(text):
 
 results = []
 
-# Process emails
+
+# PROCESS EMAILS and ENRICHMENT
+
 for i, num in enumerate(mail_id_list):
     print(f"Processing email {i+1}/{len(mail_id_list)}")
     typ, data = my_mail.fetch(num, '(RFC822)')
@@ -93,12 +127,26 @@ for i, num in enumerate(mail_id_list):
 
                     parsed = extract_fields(body)
                     if parsed and parsed["email"]:
+                        
+                        # 🔥 Enrich with location
+                        location = get_location(parsed.get("ip"))
+
+                        parsed.update({
+                            "city": location["city"],
+                            "state": location["state"],
+                            "country": location["country"]
+                        })
+
                         results.append(parsed)
 
-# Convert to DataFrame
+
+# CONVERT TO DATAFRAME
+
 df_new = pd.DataFrame(results)
 
-# Load existing data
+
+# LOAD EXISTING DATA
+
 try:
     existing_data = sheet.get_all_records()
     df_existing = pd.DataFrame(existing_data)
@@ -110,12 +158,16 @@ except Exception as e:
     print("No existing data or error:", e)
     df = df_new
 
-# Update sheet
+
+# UPDATE SHEET
+
 sheet.clear()
 sheet.update([df.columns.values.tolist()] + df.values.tolist())
 
 print(f"Total unique subscribers in sheet: {len(df)}")
 
-# Close connection
+
+# CLOSE CONNECTION
+
 my_mail.close()
 my_mail.logout()
